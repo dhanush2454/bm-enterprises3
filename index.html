@@ -1046,18 +1046,37 @@ function updateReminderBadge(){
    account can pull it down too. This is what makes a reminder created
    on mobile visible — and its push notification fire — on laptop. */
 async function syncCloudReminders(){
-  if(!CU?.id)return;
+  if(!CU?.id)return{ok:false,reason:'not-logged-in'};
   try{
     const{data:reminders,error:rErr}=await sb.from('custom_reminders').select('*').eq('user_id',CU.id);
-    if(!rErr&&reminders){
-      sl('customReminders',reminders.map(cloudReminderToLocal));
-    }
+    if(rErr)throw rErr;
+    if(reminders)sl('customReminders',reminders.map(cloudReminderToLocal));
+
     const{data:notifs,error:nErr}=await sb.from('notifs').select('*').eq('user_id',CU.id);
-    if(!nErr&&notifs){
-      sl('notifs',notifs.map(cloudNotifToLocal));
-    }
+    if(nErr)throw nErr;
+    if(notifs)sl('notifs',notifs.map(cloudNotifToLocal));
+
     updateReminderBadge();
-  }catch(e){console.warn('syncCloudReminders failed (offline?)',e);}
+    return{ok:true};
+  }catch(e){
+    console.warn('syncCloudReminders failed (offline or network issue?)',e);
+    return{ok:false,reason:e?.message||'network error'};
+  }
+}
+/* Manual "Sync" button on the Reminders page — for when a person doubts
+   the automatic sync went through and wants to force a fresh pull from
+   the cloud right now, with clear visible feedback either way. */
+async function manualSyncCloud(){
+  const btn=$('cloudSyncBtn');
+  if(btn){btn.disabled=true;btn.innerHTML='⟲ Syncing…';btn.style.opacity='.7';}
+  const result=await syncCloudReminders();
+  if(result.ok){
+    toast('Synced with cloud ✓','ok');
+    renderCurPage(true); // refresh content without restarting the page fade-in
+  }else{
+    toast('Sync failed: '+(result.reason||'check your connection'),'err');
+  }
+  if(btn){btn.disabled=false;btn.innerHTML='⟲ Sync';btn.style.opacity='1';}
 }
 function cloudReminderToLocal(r){
   const d=new Date(r.due_at);
@@ -1872,7 +1891,7 @@ function goPage(id,params={},noHistory=false){
   if(_profOpen){_profOpen=false;$('profDrop')?.classList.remove('on');}
   _navigateTo(id,params);
 }
-function renderCurPage(){
+function renderCurPage(skipAnim){
   const pages={
     dashboard:pgDash,myJobs:pgMyJobs,jobs:pgJobs,completed:pgCompleted,calendar:pgCalendar,
     machines:pgMach,operators:pgOps,maintenance:pgMaint,
@@ -1885,14 +1904,23 @@ function renderCurPage(){
     salary:pgSalary,attendance:pgAttendance,opInvoices:pgOpInvoices,trpDetail:pgTRPDetail,gstDetail:pgGSTDetail,
   };
   const fn=pages[curPg];
-  $('pgWrap').innerHTML=`<div style="animation:fadeUp .22s ease both">${fn?fn(curPgParams):'<p style="color:var(--t2);padding:2rem">Page not found</p>'}</div>`;
-  $('cArea').scrollTop=0;
+  const html=fn?fn(curPgParams):'<p style="color:var(--t2);padding:2rem">Page not found</p>';
+  // skipAnim=true is used for the quiet background refresh after cloud sync
+  // (see syncCloudReminders below) so it doesn't restart the fade-in
+  // animation and cause a visible "blink" every time fresh data arrives.
+  $('pgWrap').innerHTML=skipAnim?html:`<div style="animation:fadeUp .22s ease both">${html}</div>`;
+  if(!skipAnim)$('cArea').scrollTop=0;
   // PHASE 1: pull latest reminders/notifs from Supabase once per visit to
   // this page (not on every re-render), so a reminder created on another
-  // device shows up here without needing a full logout/login.
-  if(curPg==='notifications'&&!_notifSyncInFlight){
+  // device shows up here without needing a full logout/login. Re-renders
+  // WITHOUT restarting the animation, and only if the data actually changed.
+  if(curPg==='notifications'&&!skipAnim&&!_notifSyncInFlight){
     _notifSyncInFlight=true;
-    syncCloudReminders().finally(()=>{_notifSyncInFlight=false;}).then(()=>{if(curPg==='notifications')renderCurPage();});
+    const beforeSnapshot=JSON.stringify({n:gl('notifs'),r:gl('customReminders')});
+    syncCloudReminders().then(()=>{
+      const afterSnapshot=JSON.stringify({n:gl('notifs'),r:gl('customReminders')});
+      if(curPg==='notifications'&&afterSnapshot!==beforeSnapshot)renderCurPage(true);
+    }).finally(()=>{_notifSyncInFlight=false;});
   }
   setTimeout(()=>{
     ['jobProof','inspPh','maintPh','accPh','expPh'].forEach(fid=>{
@@ -4470,7 +4498,10 @@ function pgNotifs(){
   updateReminderBadge();
 
   return`<div class="ph"><div><h1 class="pt">${t('notifications')}</h1></div>
-  <button class="btn bP bSm" onclick="openCreateReminder()">+ Reminder</button></div>
+  <div style="display:flex;gap:.5rem">
+    <button class="btn bG bSm" id="cloudSyncBtn" onclick="manualSyncCloud()" title="Pull latest reminders/notifications from the cloud">⟲ Sync</button>
+    <button class="btn bP bSm" onclick="openCreateReminder()">+ Reminder</button>
+  </div></div>
 
 ${mgrDeletes.length?`<div style="background:var(--Rbg);border:1.5px solid rgba(239,68,68,.35);border-radius:var(--r12);padding:.875rem;margin-bottom:.75rem">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
