@@ -1384,13 +1384,16 @@ function onRoleChg(){const r=val('rr');$('codeEntry').style.display=(r==='operat
    registered on mobile" work — the account exists on Supabase's servers,
    not inside one device's browser storage. */
 async function onLoginEmailInput(email){
-  // Show secret code field if the typed email belongs to an admin account
+  // Show secret code field if the typed email belongs to an admin account.
+  // Before login the visitor is NOT authenticated, so RLS rightly blocks
+  // a direct query on profiles — we use a narrow RPC function instead
+  // that only answers true/false for this one specific question.
   const lookup=email.toLowerCase();
   const wrap=$('liSecretWrap');
   if(!lookup){if(wrap)wrap.style.display='none';return;}
   try{
-    const{data,error}=await sb.from('profiles').select('role').eq('email',lookup).eq('role','admin').maybeSingle();
-    if(wrap)wrap.style.display=(!error&&data)?'block':'none';
+    const{data,error}=await sb.rpc('is_admin_email',{check_email:lookup});
+    if(wrap)wrap.style.display=(!error&&data===true)?'block':'none';
   }catch(e){if(wrap)wrap.style.display='none';}
 }
 
@@ -1456,8 +1459,8 @@ async function doRegister(){
       companyCode=genCode(cname);
     }else{
       if(!code){toast('Enter company code','err');return;}
-      const{data:adminMatch,error:cErr}=await sb.from('profiles').select('id').eq('company_code',code).eq('role','admin').maybeSingle();
-      if(cErr||!adminMatch){toast('Invalid company code','err');return;}
+      const{data:isValidCode,error:cErr}=await sb.rpc('is_valid_company_code',{check_code:code});
+      if(cErr||isValidCode!==true){toast('Invalid company code','err');return;}
       companyCode=code;
     }
 
