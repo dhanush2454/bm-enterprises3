@@ -803,6 +803,12 @@ const sl=(k,v)=>{
   }
 };
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+// uid() above is fine for LOCAL-only ids (jobs, invoices, etc — untouched
+// localStorage tables). Supabase's `id` columns are real Postgres `uuid`
+// type, which REJECTS any string that isn't a proper UUID — uid()'s
+// output silently fails every insert into custom_reminders/notifs.
+// Use this instead for anything written to Supabase.
+const newUUID=()=>(crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16);}));
 /* Cumulative totals — add when record created, never subtract on delete */
 function addMaintTotal(amt){const v=parseFloat(g('maintCumTotal'))||0;s('maintCumTotal',v+(parseFloat(amt)||0));}
 function addExpTotal(amt){const v=parseFloat(g('expCumTotal'))||0;s('expCumTotal',v+(parseFloat(amt)||0));}
@@ -1097,7 +1103,7 @@ function cloudNotifToLocal(n){
 function addReminder(userId,msg){
   if(!userId)return;
   const all=gl('notifs');
-  const local={id:uid(),userId,cc:cc(),msg,type:'reminder',read:false,ts:nowISO()};
+  const local={id:newUUID(),userId,cc:cc(),msg,type:'reminder',read:false,ts:nowISO()};
   all.push(local);
   sl('notifs',all);updateReminderBadge();
   // Push to Supabase so this notification shows up on the user's OTHER
@@ -4638,7 +4644,7 @@ async function saveCustomReminder(){
   if(!msg)return toast('Enter a reminder message','err');
   if(!CU?.id)return toast('Not logged in','err');
 
-  const id=uid();
+  const id=newUUID();
   const newReminder={id,userId:CU.id,cc:cc(),msg,text:msg,date,dueDate:date,dueTime,done:false,created:nowISO()};
   const all=gl('customReminders');
   all.push(newReminder);
@@ -4656,7 +4662,11 @@ async function saveCustomReminder(){
     const{error:insErr}=await sb.from('custom_reminders').insert({
       id,user_id:CU.id,company_code:cc(),msg,due_at:dueAtISO||new Date().toISOString(),done:false
     });
-    if(insErr){console.warn('reminder cloud insert failed',insErr);return;}
+    if(insErr){
+      console.warn('reminder cloud insert failed',insErr);
+      toast('Saved on this device only — cloud sync failed: '+(insErr.message||'unknown error'),'err');
+      return;
+    }
 
     if(dueAtISO){
       // Schedule the push to fire at the exact date/time the user picked —
