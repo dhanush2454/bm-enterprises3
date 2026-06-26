@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "functions": {
+    "api/schedule-reminder.js": { "memory": 128, "maxDuration": 10 },
+    "api/cancel-reminder.js": { "memory": 128, "maxDuration": 10 }
+  }
+}
