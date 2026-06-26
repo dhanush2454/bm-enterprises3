@@ -4653,13 +4653,13 @@ async function saveCustomReminder(){
   all.push(newReminder);
   sl('customReminders',all);
   closeModal();
-  toast('Reminder saved ✓','ok');
-  updateReminderBadge();
-  goPage('notifications',{},true);
 
-  // PHASE 1: persist to Supabase (so it's visible on every device this
-  // account logs into) and schedule the EXACT-time push via OneSignal.
-  // due_at must be a real timestamp; default to 09:00 if no time given.
+  // PHASE 1: persist to Supabase FIRST, before navigating/rendering.
+  // The Reminders page triggers a background cloud sync on every visit,
+  // which OVERWRITES the local cache with whatever Supabase currently
+  // has. If we navigated there before this insert finished, a sync
+  // could complete first and wipe out the reminder we just added
+  // locally — making it flash and vanish. Waiting here closes that gap.
   const dueAtISO=date?new Date(date+'T'+(dueTime||'09:00')+':00').toISOString():null;
   try{
     const{error:insErr}=await sb.from('custom_reminders').insert({
@@ -4668,10 +4668,21 @@ async function saveCustomReminder(){
     if(insErr){
       console.warn('reminder cloud insert failed',insErr);
       toast('Saved on this device only — cloud sync failed: '+(insErr.message||'unknown error'),'err');
-      return;
+    }else{
+      toast('Reminder saved ✓','ok');
     }
+  }catch(e){
+    console.warn('reminder cloud insert error',e);
+    toast('Saved on this device only — check your connection','err');
+  }
 
-    if(dueAtISO){
+  updateReminderBadge();
+  goPage('notifications',{},true);
+
+  // Schedule the EXACT-time push via OneSignal (can safely happen after
+  // navigation — it doesn't affect what's shown in the local list).
+  if(dueAtISO){
+    try{
       // Schedule the push to fire at the exact date/time the user picked —
       // this is what makes it arrive on time and on every linked device,
       // even if all of them are closed when it fires.
@@ -4687,8 +4698,8 @@ async function saveCustomReminder(){
         const idx=updated.findIndex(r=>r.id===id);
         if(idx>=0){updated[idx].onesignalId=data.onesignalId;sl('customReminders',updated);}
       }
-    }
-  }catch(e){console.warn('Reminder cloud sync/schedule failed (offline?)',e);}
+    }catch(e){console.warn('Push scheduling failed (offline?)',e);}
+  }
 }
 
 async function toggleCustomRem(rid){
@@ -4699,8 +4710,12 @@ async function toggleCustomRem(rid){
   all[idx].doneAt=all[idx].done?nowISO():null;
   sl('customReminders',all);
   updateReminderBadge();
-  goPage('notifications',{},true);
 
+  // Finish the cloud write BEFORE navigating — navigating triggers a
+  // background sync that overwrites the local cache with Supabase's
+  // current data; if that sync ran before this update finished, it
+  // would show the OLD done/pending state for a moment (or permanently
+  // if the timing is unlucky), undoing what was just tapped.
   try{
     await sb.from('custom_reminders').update({done:all[idx].done}).eq('id',rid);
     // If marked done before it fired, cancel the scheduled push so it
@@ -4710,6 +4725,8 @@ async function toggleCustomRem(rid){
         body:JSON.stringify({onesignalId:all[idx].onesignalId})}).catch(()=>{});
     }
   }catch(e){console.warn('toggle reminder cloud sync failed',e);}
+
+  goPage('notifications',{},true);
 }
 
 async function delCustomRem(rid){
@@ -4717,9 +4734,11 @@ async function delCustomRem(rid){
   const existing=gl('customReminders').find(r=>r.id===rid);
   sl('customReminders',gl('customReminders').filter(r=>r.id!==rid));
   updateReminderBadge();
-  goPage('notifications',{},true);
   toast('Reminder deleted','info');
 
+  // Same reasoning as toggleCustomRem above: finish the cloud delete
+  // before navigating, so a background sync can't bring the
+  // just-deleted reminder back from Supabase before the delete lands.
   try{
     await sb.from('custom_reminders').delete().eq('id',rid);
     if(existing?.onesignalId){
@@ -4727,6 +4746,8 @@ async function delCustomRem(rid){
         body:JSON.stringify({onesignalId:existing.onesignalId})}).catch(()=>{});
     }
   }catch(e){console.warn('delete reminder cloud sync failed',e);}
+
+  goPage('notifications',{},true);
 }
 
 function viewCustomRem(rid){
