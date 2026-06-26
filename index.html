@@ -516,7 +516,7 @@ td{padding:.62rem .8rem;color:var(--t1);vertical-align:middle}
     </div>
     <div class="fg">
       <label class="fl">Your Name</label>
-      <input class="fi" id="welcomeNameInput" placeholder="Enter your name or access code" autocomplete="off"
+      <input class="fi" id="welcomeNameInput" placeholder="Enter your name" autocomplete="off"
         oninput="onWelcomeInput(this.value)"
         onkeydown="if(event.key==='Enter')submitWelcomeName()"/>
     </div>
@@ -1439,13 +1439,26 @@ async function doRegister(){
     }
     if(!signUpData?.user){toast('Could not create account. Try again.','err');return;}
 
+    // If "Confirm email" is still ON in Supabase Auth settings, signUp()
+    // returns a user but NO session — without a session, auth.uid() is
+    // null and the profile insert below gets blocked by Row Level Security.
+    // Turn off "Confirm email" in Supabase → Authentication → Sign In / Providers
+    // → Email, OR keep it on and have the user verify before continuing.
+    if(!signUpData.session){
+      toast('Account created! Check your email to confirm, then log in.','info');
+      swTab('li');
+      return;
+    }
+
     const op6=gen6();
     const newProfile={id:signUpData.user.id,name,email,role,company_code:companyCode,
                        company_name:cname,phone:phone||'',op6};
     const{error:insErr}=await sb.from('profiles').insert(newProfile);
     if(insErr){
       console.error(insErr);
-      toast('Account created but profile setup failed. Contact support.','err');
+      // Surface the real reason instead of a generic message, so it's
+      // actually debuggable from the toast alone.
+      toast('Profile setup failed: '+(insErr.message||insErr.code||'unknown error'),'err');
       return;
     }
 
