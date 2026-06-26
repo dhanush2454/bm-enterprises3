@@ -1091,8 +1091,17 @@ async function manualSyncCloud(btnId){
 }
 function cloudReminderToLocal(r){
   const d=new Date(r.due_at);
+  // due_at is stored in UTC (correct, and required for OneSignal's
+  // send_after to fire at the right real-world moment regardless of
+  // timezone). For DISPLAY, we must convert back to the viewer's local
+  // time — using toISOString() here would show raw UTC numbers instead
+  // (e.g. a 4:30 PM IST reminder would incorrectly display as 11:00,
+  // its UTC equivalent). getFullYear/getMonth/etc read local time.
+  const pad=n=>String(n).padStart(2,'0');
+  const localDate=r.due_at?`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`:'';
+  const localTime=r.due_at?`${pad(d.getHours())}:${pad(d.getMinutes())}`:'';
   return{id:r.id,userId:r.user_id,cc:r.company_code,msg:r.msg,text:r.msg,
-         date:r.due_at?d.toISOString().slice(0,10):'',dueTime:r.due_at?d.toISOString().slice(11,16):'',
+         date:localDate,dueTime:localTime,
          done:r.done,doneAt:r.done?r.created_at:null,created:r.created_at,
          onesignalId:r.onesignal_notification_id};
 }
